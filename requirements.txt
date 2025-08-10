@@ -6,3 +6,5 @@ dotenv                  # load application config from .env files
 instructor[ollama]      # pstructured prompts via LLM
 tiktoken                # tokenisation & token counting
 weaviate-client>=4      # embeddings and vector DB access
+
+django==1.11.29         # deliberately insecure module for testing dependabot
