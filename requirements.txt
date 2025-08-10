@@ -1,0 +1,8 @@
+pytest                  # unit test runner
+pytest-dependency       # test ordering and dependency management
+slack_sdk               # Slack API client
+ollama                  # Local LLM Inference Server (open-source)
+dotenv                  # load application config from .env files
+instructor[ollama]      # pstructured prompts via LLM
+tiktoken                # tokenisation & token counting
+weaviate-client>=4      # embeddings and vector DB access
