@@ -20,7 +20,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY KnowledgeBot.py  .
+COPY pytest.ini       .
+COPY LLMService       ./LLMService
+COPY VectorDatabase   ./VectorDatabase
+COPY tests            ./tests
+
+# Allows script to be container aware (skips reading the .env file)
+ENV IN_DOCKER=1
 
 VOLUME ["/app/data"]
 

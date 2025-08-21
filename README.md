@@ -13,3 +13,6 @@ docker build -t knowledgebot .
 
 Running the container
 docker run --rm --name knowledgebot -v "$(pwd)/data:/app/data" knowledgebot
+
+Using docker compose
+docker compose up --build

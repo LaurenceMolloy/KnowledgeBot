@@ -47,9 +47,18 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 
-# fail fast if you can't find a .env file
-if not find_dotenv(".env"):
-    pytest.exit("Missing .env file – copy .env.example and set SLACK_TOKEN")
+in_docker = os.environ.get("IN_DOCKER") == "1"
+# If you are running in a container
+if in_docker:
+    # confirm .env has been loaded into environment by docker compose
+    if not os.environ.get("ENV_LOADED"):
+        pytest.exit("Environment not set – is docker compose loading the .env?")
+# Load environment variables from .env file (where present)
+elif find_dotenv(".env"):
+    load_dotenv()
+# Otherwise, fail fast as you are running locally and can't find a .env file
+else:
+    pytest.exit("Missing .env file – copy .env.example and set SLACK parameters")
 
 
 # ------------------------------------------------------------------
@@ -188,8 +197,8 @@ def environment():
         "bot_emoji": "mortar_board"                   # Marker emoji to track processed messages
     }
 
-    # Load environment variables from .env file (if present)
-    load_dotenv()
+    # Load environment variables from .env file (if present) - commented out as we now do that at the top
+    #load_dotenv()
 
     # Pull configuration values from environment, or fallback to defaults
     environment_llm_port = int(os.environ.get("LLM_PORT")) if os.environ.get("LLM_PORT") is not None else None

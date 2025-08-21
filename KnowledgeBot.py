@@ -12,7 +12,7 @@
 ### 3. [DONE] LLM: Extract out a class structure for all LLM-Based functionality
 ### 4. LLM: extraction of name (user) entities (which aren't Slack mentions)
 ### 5. [PARTIAL - Instructor] LLM: use of LLM as a judge (filter/editor) for its output
-### 6. [NEXT] - Switch for inclusion/exclusion of LLM functionality
+### 6. [DONE] - Switch for inclusion/exclusion of LLM functionality
 ### 7. Deployment to AWS as a lambda function (minus the LLM part)
 ### 8. Creation/Deployment of an Ollama Server ECS (Docker Compose etc...)
 ### 9. Lambda-controlled activation/deactivation of the Ollama Server ECS (for batch-based processing)
@@ -21,18 +21,21 @@
 ### 12. Private LLM for Github solution: https://dev.to/mcasperson/private-llms-for-github-actions-4nfa
 ### 13. [DONE] Multiple channel operation
 ### 14. what happens if an #EDIT message has a link to a message that is subsequently deleted?
-### 15. CI/CD & Dependabot?
-### 16. an ***option*** to use AWS SECRETS (must retain .env option for those without AWS access & dev/test purposes)
-### 17. add channel descriptions (where populated) to the exported message files - provides additional RAG context
-### 18. Abstract/Concrete classing for knowledge sources (of which Slack is one) - see how Vector Stores is done.
-### 19. Add the ability to collect multiple hashtags for storing in different export folders
+### 15. [DONE] Dependabot scans
+### 16. CI/CD
+### 17. [DONE] Build with Docker Compose and load in .env instead of copying into container (more secure) 
+### 18. an ***option*** to use AWS SECRETS (must retain .env option for those without AWS access & dev/test purposes)
+### 18. add channel descriptions (where populated) to the exported message files - provides additional RAG context
+### 19. Abstract/Concrete classing for knowledge sources (of which Slack is one) - see how Vector Stores is done.
+### 20. Add the ability to collect multiple hashtags for storing in different export folders
 
-### 20. [DONE] filename as channel-date(orig)-timestamp(orig)-ordinal.txt
-### 21. [DONE] deletion of old & re-creation of new knowledge chunk files
-### 21. when information is "attached" through forwarding or linking should I process the inner content independently
+### 21. [DONE] filename as channel-date(orig)-timestamp(orig)-ordinal.txt
+### 22. [DONE] deletion of old & re-creation of new knowledge chunk files
+### 23. when information is "attached" through forwarding or linking should I process the inner content independently
 ###     (currently it's just appended, amnd thus inherits the linking context - the source context is lost)
-### 22. what happens with e.g.  #KNOWLEDGE within #KNOWLEDGE if you know #END what I mean #END 
-### 23. use a logging module
+### 24. what happens with e.g.  #KNOWLEDGE within #KNOWLEDGE if you know #END what I mean #END 
+### 25. use a logging module
+### 26. 
 
 import pytest
 import argparse
@@ -47,7 +50,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 
 # Add this import for .env file support
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
@@ -135,7 +138,7 @@ class KnowledgeBot:
             model=self.llm_model,
             server=self.llm_server,
             port=self.llm_port
-        )
+        ) if self.enable_llm else None
 
         # Ensure the export directory exists; create it if missing
         self.export_folder.mkdir(parents=True, exist_ok=True)
@@ -494,15 +497,19 @@ class KnowledgeBot:
 
                 for message in messages:
                     
-                    reply_response = self.client.conversations_replies(channel=channel_id, ts=float(message["ts"]))
+                    # this will always return the thread parent even if before last run timestanp
+                    reply_response = self.client.conversations_replies(
+                        channel=channel_id, 
+                        ts=float(message["ts"]),
+                        oldest=self.state['last_run_timestamp'],    # filter out older replies
+                        inclusive=False                             # replies must be STRICTLY newer than last run timestamp
+                    )
+
+                    # this will remove parent message if it wasn't created after the last run timestamp
                     thread_messages = [
                         msg for msg in reply_response.get('messages', [])
                         if float(msg["ts"]) > float(self.state['last_run_timestamp'])
                     ]                
-
-                    # append original thread message only if it post-dates last run time
-                    if float(message["ts"]) > float(self.state['last_run_timestamp']):
-                        thread_messages.insert(0, message)
 
                     for thread_message in thread_messages:
 
@@ -549,8 +556,10 @@ class KnowledgeBot:
                                 "timestamp": str(ts),  # Add this line,
                                 "user_name": self._get_user_name(thread_message.get('user', 'UNKNOWN')),
                                 "mentions": self._get_mentioned_user_names(text),
-                                "keywords": self.llm.get_keywords(content_block, top_n=5),
-                                "summary": self.llm.get_summary(content_block, max_length=25),
+                                **( {
+                                    "keywords": self.llm.get_keywords(content_block, top_n=5),
+                                    "summary": self.llm.get_summary(content_block, max_length=25),
+                                } if self.llm else {} )
                             }
                             self._write_knowledge_chunks(snippet_count, content_block, metadata)
                         self._react_to_message(channel_id, ts, "mortar_board")
@@ -701,7 +710,18 @@ def main():
 
     args = parse_args()
 
-    load_dotenv()
+    in_docker = os.environ.get("IN_DOCKER") == "1"
+    # If you are running in a container
+    if in_docker:
+        # confirm .env has been loaded into environment by docker compose
+        if not os.environ.get("ENV_LOADED"):
+            pytest.exit("Environment not set – is docker compose loading the .env?")
+    # Load environment variables from .env file (where present)
+    elif find_dotenv(".env"):
+        load_dotenv()
+    # Otherwise, fail fast as you are running locally and can't find a .env file
+    else:
+        pytest.exit("Missing .env file – copy .env.example and set up all parameters")
 
     if not args.no_checks and run_preflight_checks("slack_preflight"):
         print("Slack configuration pre-flight checks failed – aborting. Run 'pytest -m slack_preflight' for details.")
@@ -721,7 +741,6 @@ def main():
         print("\nProcessing complete.")
     except Exception as e:
         print(e)
-
 
 
 if __name__ == "__main__":

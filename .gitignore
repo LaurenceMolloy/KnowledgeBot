@@ -1,6 +1,8 @@
-data/
-venv/
-*/__pycache__
 .env
+.venv/
+venv/
+data/
+archived_files/
+*/__pycache__
 
 IGNORE-*

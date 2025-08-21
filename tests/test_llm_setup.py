@@ -41,12 +41,19 @@ import time
 import subprocess
 
 
-# fail fast if you can't find a .env file
-if not find_dotenv(".env"):
-    pytest.exit("Missing .env file – copy .env.example and set SLACK_TOKEN")
+in_docker = os.environ.get("IN_DOCKER") == "1"
 
-# Load environment variables from .env file (if present)
-load_dotenv()
+# If you are running in a container
+if in_docker:
+    # confirm .env has been loaded into environment by docker compose
+    if not os.environ.get("ENV_LOADED"):
+        pytest.exit("Environment not set – is docker compose loading the .env?")
+# Load environment variables from .env file (where present)
+elif find_dotenv(".env"):
+    load_dotenv()
+# otherwise, fail fast if you are running locally and can't find a .env file
+elif not find_dotenv(".env"):
+    pytest.exit("Missing .env file – copy .env.example and set LLM parameters")
 
 
 # ------------------------------------------------------------------
