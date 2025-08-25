@@ -34,10 +34,13 @@ Clear and concise failure reasons are given for all test failures.
 Version History:
 VERSION  DATE           DESCRIPTION                         AUTHORED-BY
 ===========================================================================
-1.0.0    17/07/2025     initial release                     Laurence Molloy      
+1.0.0    17/07/2025     initial release                     Laurence Molloy   
+1.0.1    24/08/2025     BotConfig refactor                  Laurence Molloy   
+                        added environment load test
+                        env load dependencies for all tests  
 ===========================================================================
 """
-version = "1.0.0"
+version = "1.0.1"
 
 import pytest
 import os
@@ -46,6 +49,8 @@ from dotenv import load_dotenv, find_dotenv
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from Config.Resolver import ConfigResolver
+from Config.Schema import BotConfig
 
 in_docker = os.environ.get("IN_DOCKER") == "1"
 # If you are running in a container
@@ -166,6 +171,34 @@ def environment():
     """
     Session-scoped fixture to assemble config and Slack setup for tests.
 
+    - a simpler config import from BotConfig module (resolves values from Docker Secrets > .env > defaults)
+    - Sets up Slack WebClient
+    - Resolves channel IDs for testing
+
+
+    Returns:
+        dict: Config
+    """
+
+
+    env = BotConfig.from_resolver(ConfigResolver()).to_dict()
+
+    # Create the Slack WebClient using the supplied token
+    env['client'] = WebClient(token=env['slack_token'])
+
+    # Build {name: {id: …}} for every configured channel
+    target_channels = env['slack_knowledge_channels'] + [env['slack_edit_channel']]
+    env['channel_map'] = get_channel_ids(env['client'], target_channels, env['slack_channel_types'])
+
+    return env
+
+@pytest.fixture(scope="session")
+def environment_deprecated():
+    """
+    NO LONGER USED - KEPT FOR POSTERITY ONLY - REPLACED BY BotConfig APPROACH - CAN BE DELETED
+    
+    Session-scoped fixture to assemble config and Slack setup for tests.
+
     - Pulls config from environment or uses defaults
     - Sets up Slack WebClient
     - Resolves channel IDs for testing
@@ -246,6 +279,18 @@ def validated_token(environment):
 # ------------------------------------------------------------------
 
 
+@pytest.mark.dependency()
+@pytest.mark.slack_preflight
+def test_environment_loads():
+
+    try:
+        env = BotConfig.from_resolver(ConfigResolver()).to_dict()
+        assert True
+    except Exception as e:
+        pytest.fail(str(e))
+
+
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_slack_token_is_set(environment):
     '''
@@ -255,6 +300,7 @@ def test_slack_token_is_set(environment):
     assert environment['slack_token'] is not None, failure_message
         
 
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_slack_token_is_valid(environment):
     '''
@@ -284,11 +330,12 @@ def test_slack_token_is_valid(environment):
         pytest.fail(f"Unexpected python error. {type(e).__name__}: {e}")
 
 
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_channel_existence(validated_token):
     """Fail if any configured Slack channel isn’t found in the workspace."""
     env = validated_token
-    configured_channels = set(env['slack_channels'] + [env['slack_edit_channel']])
+    configured_channels = set(env['slack_knowledge_channels'] + [env['slack_edit_channel']])
     channels_found = set(env['channel_map'])
     missing = configured_channels - channels_found
     failure_message = f"Missing Slack channels: {', '.join(missing)}"
@@ -306,6 +353,7 @@ def test_channel_existence(validated_token):
         pytest.param(lambda c, cid, uid: c.users_info(user=uid), id="users:read"),
     ],
 )
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_single_scope(validated_token, api_call):
     """Verify that each required Slack scope is granted."""
@@ -317,6 +365,7 @@ def test_single_scope(validated_token, api_call):
         handle_slack_error(e, env['slack_edit_channel'])
 
 
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_scope_reactions_write(validated_token):
     """
@@ -337,7 +386,7 @@ def test_scope_reactions_write(validated_token):
         client = env['client']
         channel_name = env['slack_edit_channel']
         channel_id = env['channel_map'][channel_name]['id']
-        emoji = env['bot_emoji']
+        emoji = env['slack_bot_emoji']
 
         # Get the latest message from the channel
         response = client.conversations_history(channel=channel_id, limit=1)
@@ -361,6 +410,7 @@ def test_scope_reactions_write(validated_token):
         pytest.fail(f"Unexpected python error: {type(e).__name__}: {e}")
 
 
+@pytest.mark.dependency(depends=["test_environment_loads"])
 @pytest.mark.slack_preflight
 def test_channel_memberships(validated_token):
     """

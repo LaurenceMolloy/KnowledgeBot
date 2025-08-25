@@ -3,5 +3,10 @@ services:
     build: .
     env_file:
       - .env
+    secrets:
+      - SLACK_TOKEN
     volumes:
       - ./data:/app/data
+secrets:
+  SLACK_TOKEN:
+    file: ./secrets/SLACK_TOKEN

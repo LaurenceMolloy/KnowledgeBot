@@ -23,10 +23,11 @@ Any failure prints a single, actionable reason.
 Version History:
 VERSION  DATE           DESCRIPTION                         AUTHORED-BY
 ===========================================================================
-1.0.0    18/07/2025     initial release                     Laurence Molloy      
+1.0.0    18/07/2025     initial release                     Laurence Molloy   
+1.0.1    24/08/2025     BotConfig refactor                  Laurence Molloy   
 ===========================================================================
 """
-version = "1.0.0"
+version = "1.0.1"
 
 import os
 import socket
@@ -40,6 +41,8 @@ import json
 import time
 import subprocess
 
+from Config.Resolver import ConfigResolver
+from Config.Schema import BotConfig
 
 in_docker = os.environ.get("IN_DOCKER") == "1"
 
@@ -96,6 +99,24 @@ def _running_ollama_models():
 @pytest.fixture(scope="session")
 def ollama_env():
     """
+    Session-scoped fixture to assemble LLM-based config for tests.
+
+    - a simpler config import from BotConfig module (resolves values from Docker Secrets > .env > defaults)
+
+    Returns:
+        dict: Config
+    """
+
+    env = BotConfig.from_resolver(ConfigResolver()).to_dict()
+
+    return env
+
+
+@pytest.fixture(scope="session")
+def ollama_env_deprecated():
+    """
+    NO LONGER USED - KEPT FOR POSTERITY ONLY - REPLACED BY BotConfig APPROACH - CAN BE DELETED
+
     Session-scoped fixture to assemble LLM-based config for tests.
 
     - Pulls config from environment or uses defaults

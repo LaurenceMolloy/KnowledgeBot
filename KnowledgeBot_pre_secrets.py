@@ -24,18 +24,17 @@
 ### 15. [DONE] Dependabot scans
 ### 16. CI/CD
 ### 17. [DONE] Build with Docker Compose and load in .env instead of copying into container (more secure) 
-### 18. [DONE] add option to read sensitive settings (e.g. SLACK_TOKEN) fromm Docker Secrets. Retain .env for everything else (and local dev)
-### 19. add AWS SECRETS as an extra option beyond Docker Secrets
-### 20. add channel descriptions (where populated) to the exported message files - provides additional RAG context
-### 21. Abstract/Concrete classing for knowledge sources (of which Slack is one) - see how Vector Stores is done.
-### 22. Add the ability to collect multiple hashtags for storing in different export folders
+### 18. an ***option*** to use AWS SECRETS (must retain .env option for those without AWS access & dev/test purposes)
+### 18. add channel descriptions (where populated) to the exported message files - provides additional RAG context
+### 19. Abstract/Concrete classing for knowledge sources (of which Slack is one) - see how Vector Stores is done.
+### 20. Add the ability to collect multiple hashtags for storing in different export folders
 
-### 23. [DONE] filename as channel-date(orig)-timestamp(orig)-ordinal.txt
-### 24. [DONE] deletion of old & re-creation of new knowledge chunk files
-### 25. when information is "attached" through forwarding or linking should I process the inner content independently
+### 21. [DONE] filename as channel-date(orig)-timestamp(orig)-ordinal.txt
+### 22. [DONE] deletion of old & re-creation of new knowledge chunk files
+### 23. when information is "attached" through forwarding or linking should I process the inner content independently
 ###     (currently it's just appended, amnd thus inherits the linking context - the source context is lost)
-### 26. what happens with e.g.  #KNOWLEDGE within #KNOWLEDGE if you know #END what I mean #END 
-### 27. use a logging module
+### 24. what happens with e.g.  #KNOWLEDGE within #KNOWLEDGE if you know #END what I mean #END 
+### 25. use a logging module
 ### 26. 
 
 import pytest
@@ -59,24 +58,63 @@ from LLMService.LLMService import LLMService
 
 import inspect
 
-from Config.Resolver import ConfigResolver
-from Config.Schema import BotConfig
-
 
 class KnowledgeBot:
-
-    def __init__(self, config: Optional[BotConfig] = None):
-
+    
+    def __init__(self, slack_token: str = None, enable_llm: bool = None,
+                 llm_provider: str = None, llm_model: str = None, 
+                 llm_server: str = None, llm_port: int = None,
+                 export_folder: str = None, state_file: str = None):
         """
         Initialise the KnowledgeBot and ensure Slack authentication and scopes, LLM access (if enabled), 
         state management, and export folder setup.
 
-        Config values are read from a config resolver, which looks for config settings in this priority order: 
-        Docker Secrets > environment variables (.env) > internal defaults (see Config/Resolver.py)
+        Configuration is loaded in this priority order: __init__ argument > environment variable > internal default.
+        All __init__ arguments are optional and serve only to override corresponding environment variables.
         """
 
-        # Use provided config (.env) or create from secrets
-        self.config = config or BotConfig.from_resolver(ConfigResolver())
+        # Helper function to convert string environment variables to boolean
+        def str_to_bool(val: str) -> bool:
+            return str(val).strip().lower() in ("1", "true", "yes", "on")
+        
+        # Helper function to convert comma-separated string environment variables to python lists
+        def str_to_list(val: str) -> list:
+            return str(val).strip().split(',')
+
+        # Define sensible default configuration values (exercise caution when modifying these)
+        defaults = {
+            "enable_llm": False,                          # LLM usage is opt-in
+            "llm_provider": "ollama",                     # default to open-source inference server
+            "llm_model": "phi3:mini",                     # a small capable model (requires 4GB GPU memory)
+            "llm_server": "localhost",                    # assume locally hosted LLM
+            "llm_port": int(11434),                       # default ollama port
+            "export_folder": Path('./data'),              # directory for storing extracted #KNOWLEDGE
+            "state_file": Path('./data/state.json'),      # stores bot state (e.g. last run timestamp)
+            "slack_thread_max_age_days": int(7),          # maximum age (in days) of threads to search through
+            "slack_edit_channel": "test_edit",            # slack channel for #EDIT references (forces re-processing)
+            "slack_knowledge_channels": str_to_list("test_knowledge"),  # slack channels to mine for #KNOWLEDGE
+            "slack_channel_types": "public_channel",      # channel types include: public_channel, private_channel, im, mpim
+            "bot_emoji": "mortar_board"                   # the bot's chosen message processing marker
+        }
+
+        # Load configuration in the defined priority order
+        env_llm_port = int(os.environ.get("LLM_PORT")) if os.environ.get("LLM_PORT") is not None else None
+        self.slack_token    = slack_token   or os.environ.get("SLACK_TOKEN")                or None
+        self.enable_llm     = enable_llm    or str_to_bool(os.environ.get("ENABLE_LLM"))    or defaults['enable_llm']
+        self.llm_provider   = llm_provider  or os.environ.get("LLM_PROVIDER")               or defaults['llm_provider']
+        self.llm_model      = llm_model     or os.environ.get("LLM_MODEL")                  or defaults['llm_model']
+        self.llm_server     = llm_server    or os.environ.get("LLM_SERVER")                 or defaults['llm_server']
+        self.llm_port       = llm_port      or env_llm_port                                 or defaults['llm_port']
+        self.export_folder  = export_folder or Path(os.environ.get("EXPORT_FOLDER"))        or defaults['export_folder']
+        self.state_file     = state_file    or os.environ.get("STATE_FILE")                 or defaults['state_file']
+
+        # not currently available via __init__() argument
+        env_slack_thread_max_age_days = int(os.environ.get("SLACK_THREAD_MAX_AGE_DAYS")) if os.environ.get("SLACK_THREAD_MAX_AGE_DAYS") is not None else None
+        self.slack_thread_max_age_days =  env_slack_thread_max_age_days                     or defaults['slack_thread_max_age_days']
+        self.slack_edit_channel  = os.environ.get("SLACK_EDIT_CHANNEL")                     or defaults['slack_edit_channel']
+        self.slack_channels      = str_to_list(os.environ.get("SLACK_KNOWLEDGE_CHANNELS"))  or defaults['slack_knowledge_channels']
+        self.slack_channel_types = os.environ.get("SLACK_CHANNEL_TYPES")                    or defaults['slack_channel_types']
+        self.bot_emoji           = os.environ.get("BOT_EMOJI")                              or defaults['bot_emoji']
 
         # A cache for Slack user name lookups - avoids hammering the API
         # Structure: { user_id : user_name } 
@@ -87,24 +125,24 @@ class KnowledgeBot:
         self.state = self.load_bot_state()
 
         # Initialise Slack WebClient, validate authentication token and record the bot's user_id
-        self.client = WebClient(token=self.config.slack_token)
+        self.client = WebClient(token=self.slack_token)
         self.user_id = self._validate_slack_token()
 
         # Construct a dictionary of id-keyed channel metadata look-ups for all configured channels (including the #EDIT channel)
         # Structure: { channel_id: { 'name': str, 'topic': str, 'purpose': str } }
-        self.channel_metadata = self._get_channel_metadata(self.config.slack_knowledge_channels + [self.config.slack_edit_channel])
+        self.channel_metadata = self._get_channel_metadata(self.slack_channels + [self.slack_edit_channel])
 
         # Instantiate LLM interface. Its usage is conditional on self.enable_llm
         self.llm = LLMService(
-            provider=self.config.llm_provider,
-            model=self.config.llm_model,
-            server=self.config.llm_server,
-            port=self.config.llm_port
-        ) if self.config.enable_llm else None
+            provider=self.llm_provider,
+            model=self.llm_model,
+            server=self.llm_server,
+            port=self.llm_port
+        ) if self.enable_llm else None
 
         # Ensure the export directory exists; create it if missing
-        self.config.export_folder.mkdir(parents=True, exist_ok=True)
-        print(f"KnowledgeBot initialised. Exporting to: {self.config.export_folder.resolve()}")
+        self.export_folder.mkdir(parents=True, exist_ok=True)
+        print(f"KnowledgeBot initialised. Exporting to: {self.export_folder.resolve()}")
 
         # take a timestamp just prior to processing so that on next run we don't overlook any new messages due to race conditions
         self.start_timestamp = int(time.time())
@@ -127,7 +165,7 @@ class KnowledgeBot:
         returns NULL if channel metadata hasn't been compiled from Slack yet
         """
         return next((cid for cid, meta in self.channel_metadata.items() 
-                     if meta.get("name") == self.config.slack_edit_channel), None)
+                     if meta.get("name") == self.slack_edit_channel), None)
 
 
     def load_bot_state(self) -> dict:
@@ -138,16 +176,16 @@ class KnowledgeBot:
             dict: The loaded state as a dictionary, typically {'last_run_timestamp': epoch_float}.
             Returns {'last_run_timestamp': 0} (Unix epoch start) if file is not found, corrupt, or unreadable.
         """
-        if os.path.exists(self.config.state_file):
-            with open(self.config.state_file, "r") as f:
+        if os.path.exists(self.state_file):
+            with open(self.state_file, "r") as f:
                 try:
                     return json.load(f)
                 except json.JSONDecodeError:
-                    print(f"Warning: Could not decode JSON from {self.config.state_file}. Starting with default state.")
+                    print(f"Warning: Could not decode JSON from {self.state_file}. Starting with default state.")
                     # Fallback for corrupt JSON, explicitly return the default
                     return {'last_run_timestamp': 0}
                 except Exception as e:
-                    print(f"Error reading {self.config.state_file}: {e}. Starting with default state.")
+                    print(f"Error reading {self.state_file}: {e}. Starting with default state.")
                     # Fallback for other read errors, explicitly return the default
                     return {'last_run_timestamp': 0}
         else:
@@ -160,7 +198,7 @@ class KnowledgeBot:
         Writes the bot's state back to the instance's JSON state_file.
         """
         self.state['last_run_timestamp'] = self.start_timestamp
-        with open(self.config.state_file, "w") as f:
+        with open(self.state_file, "w") as f:
             # Use indent for human-readable formatting
             json.dump(self.state, f, indent=4) 
         
@@ -181,13 +219,13 @@ class KnowledgeBot:
             #No explicit return is required; successful completion without exception implies validation passed.
         """
         # Ensure a Slack token has been specified
-        if self.config.slack_token is None:
+        if self.slack_token is None:
             raise ValueError("Slack auth token is undefined. Please set SLACK_TOKEN in your environment or configuration.")
         
         # Initialise WebClient if not already done.
         # Allows _validate_slack_token() to be called defensively, when client setup has been overlooked.
         if not hasattr(self, 'client'):
-            self.client = WebClient(token=self.config.slack_token)
+            self.client = WebClient(token=self.slack_token)
 
         # Attempt to validate the token using Slack's API 
         try:
@@ -368,7 +406,7 @@ class KnowledgeBot:
         
         # Find and delete all matching files
         deleted_count = 0
-        for file in self.config.export_folder.glob(f"{prefix}*.txt"):
+        for file in self.export_folder.glob(f"{prefix}*.txt"):
             try:
                 file.unlink()
                 deleted_count += 1
@@ -401,7 +439,7 @@ class KnowledgeBot:
 
         # Construct filename
         filename = f"{safe_channel_name}_{date_str}_{ts_str}_{snippet_number:02d}.txt"
-        filepath = self.config.export_folder / filename
+        filepath = self.export_folder / filename
 
         try:
             with open(filepath, "w", encoding="utf-8") as f:
@@ -443,7 +481,7 @@ class KnowledgeBot:
         has_more = True
         while has_more:
             try:
-                adjusted_ts = f"{(float(self.state['last_run_timestamp']) - float(self.config.slack_thread_max_age_days * 86400)):.6f}"
+                adjusted_ts = f"{(float(self.state['last_run_timestamp']) - float(self.slack_thread_max_age_days * 86400)):.6f}"
                 response = self.client.conversations_history(
                     channel=channel_id,
                     oldest=adjusted_ts,

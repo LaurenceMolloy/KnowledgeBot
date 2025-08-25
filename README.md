@@ -16,3 +16,4 @@ docker run --rm --name knowledgebot -v "$(pwd)/data:/app/data" knowledgebot
 
 Using docker compose
 docker compose up --build
+docker compose down (worth running between docker compose up commands to ensure state/memory is cleared)
