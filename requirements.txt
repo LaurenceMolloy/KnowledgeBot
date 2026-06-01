@@ -5,4 +5,4 @@ ollama                  # Local LLM Inference Server (open-source)
 dotenv                  # load application config from .env files
 instructor[ollama]      # pstructured prompts via LLM
 tiktoken                # tokenisation & token counting
-weaviate-client>=4      # embeddings and vector DB access
+weaviate-client>=4.21.2      # embeddings and vector DB access
